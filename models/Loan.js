@@ -17,10 +17,26 @@ const loanSchema = new mongoose.Schema({
     },
     tenure: {
         type: Number,
-        default: 4, // months
         required: true
     },
-    monthlyInstallment: {
+    interestRate: {
+        type: Number,
+        default: 0
+    },
+    frequency: {
+        type: String,
+        enum: ['Weekly', 'Bi-Weekly', 'Monthly'],
+        default: 'Monthly'
+    },
+    installmentAmount: {
+        type: Number,
+        required: true
+    },
+    totalInterest: {
+        type: Number,
+        default: 0
+    },
+    totalPayable: {
         type: Number,
         required: true
     },
@@ -34,16 +50,18 @@ const loanSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['In Progress', 'Pending Approval', 'Overdue', 'Completed'],
-        default: 'Pending Approval'
+        enum: ['Active', 'Pending', 'Overdue', 'Completed'],
+        default: 'Active'
     }
 }, {
     timestamps: true
 });
 
-// Calculate remaining amount before saving
+// Calculate remaining amount based on totalPayable
 loanSchema.pre('save', function () {
-    this.remainingAmount = this.loanAmount - this.totalPaid;
+    if (this.isModified('totalPayable') || this.isModified('totalPaid')) {
+        this.remainingAmount = this.totalPayable - this.totalPaid;
+    }
 });
 
 module.exports = mongoose.model('Loan', loanSchema);

@@ -36,9 +36,9 @@ exports.downloadTemplate = async (req, res, next) => {
     try {
         const wb = xlsx.utils.book_new();
         const wsData = [
-            ['Name', 'Email', 'Phone', 'Loan Amount', 'Loan Start Date (YYYY-MM-DD)', 'Assigned Staff (Name)'],
-            ['John Doe', 'john@example.com', '9876543210', '10000', '2023-10-01', 'Admin'],
-            ['Jane Smith', 'jane@example.com', '9123456780', '5000', '2023-11-15', 'Sarah Jones']
+            ['Name', 'Email', 'Phone', 'Loan Amount', 'Interest Rate (%)', 'Installment Frequency', 'Loan Duration (Weeks)', 'Loan Start Date (YYYY-MM-DD)', 'Assigned Staff (Name)'],
+            ['John Doe', 'john@example.com', '9876543210', '10000', '5', 'Weekly', '12', '2023-10-01', 'Admin'],
+            ['Jane Smith', 'jane@example.com', '9123456780', '5000', '10', 'Bi-Weekly', '8', '2023-11-15', 'Sarah Jones']
         ];
         const ws = xlsx.utils.aoa_to_sheet(wsData);
         xlsx.utils.book_append_sheet(wb, ws, "Template");
@@ -84,6 +84,9 @@ exports.importExcel = async (req, res, next) => {
                 const email = row['Email'] || row['email'];
                 const phone = row['Phone'] || row['phone'];
                 const loanAmount = row['Loan Amount'] || row['loanAmount'];
+                const interestRate = row['Interest Rate (%)'] || row['Interest Rate'] || row['interestRate'] || 0;
+                const installmentFrequency = row['Installment Frequency'] || row['installmentFrequency'] || 'Weekly';
+                const loanDuration = row['Loan Duration (Weeks)'] || row['Loan Duration'] || row['loanDuration'] || 12;
                 const startDateRaw = row['Loan Start Date (YYYY-MM-DD)'] || row['Loan Start Date'] || row['loanStartDate'];
                 const staffName = row['Assigned Staff (Name)'] || row['Assigned Staff'] || row['assignedStaff'];
 
@@ -92,6 +95,10 @@ exports.importExcel = async (req, res, next) => {
                     errors.push({ row: rowNum, message: 'Missing Name, Email, or Loan Amount' });
                     continue;
                 }
+
+                // Validate frequency
+                const validFrequencies = ['Weekly', 'Bi-Weekly', 'Monthly'];
+                const frequency = validFrequencies.includes(installmentFrequency) ? installmentFrequency : 'Weekly';
 
                 // Check duplicate email
                 const existingClient = await Client.findOne({ email });
@@ -118,25 +125,48 @@ exports.importExcel = async (req, res, next) => {
 
                 await client.save();
 
-                // Create loan & Payments
-                const amount = parseFloat(loanAmount);
+                // ===== Same calculation logic as createClient =====
+                const principal = parseFloat(loanAmount);
+                const rate = parseFloat(interestRate);
+                const weeks = parseInt(loanDuration);
+
+                // Calculate installments count based on frequency
+                let installmentsCount;
+                switch (frequency) {
+                    case 'Weekly': installmentsCount = weeks; break;
+                    case 'Bi-Weekly': installmentsCount = Math.floor(weeks / 2); break;
+                    case 'Monthly': installmentsCount = Math.floor(weeks / 4); break;
+                    default: installmentsCount = weeks;
+                }
+                if (installmentsCount < 1) installmentsCount = 1;
+
+                // PRD Logic: Weekly Interest
+                const weeklyInterest = principal * (rate / 100);
+                const totalInterest = weeklyInterest * weeks;
+                const totalPayable = principal + totalInterest;
+                const installmentAmount = totalPayable / installmentsCount;
+
                 const startDate = parseExcelDate(startDateRaw);
 
                 const loan = new Loan({
                     clientId: client._id,
-                    loanAmount: amount,
+                    loanAmount: principal,
                     loanStartDate: startDate,
-                    tenure: 4,
-                    monthlyInstallment: amount / 4,
-                    remainingAmount: amount, // Assuming new loan import, full amount pending
+                    tenure: installmentsCount,
+                    interestRate: rate,
+                    frequency: frequency,
+                    installmentAmount: parseFloat(installmentAmount.toFixed(2)),
+                    totalInterest: parseFloat(totalInterest.toFixed(2)),
+                    totalPayable: parseFloat(totalPayable.toFixed(2)),
                     totalPaid: 0,
-                    status: 'In Progress'
+                    remainingAmount: parseFloat(totalPayable.toFixed(2)),
+                    status: 'Active'
                 });
 
                 await loan.save();
 
-                // Generate payment schedule
-                const schedule = generateSchedule(amount, startDate);
+                // Generate payment schedule based on frequency
+                const schedule = generateSchedule(totalPayable, startDate, frequency, installmentsCount);
                 const payments = schedule.map(payment => ({
                     ...payment,
                     loanId: loan._id,

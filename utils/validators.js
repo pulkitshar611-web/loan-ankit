@@ -6,7 +6,12 @@ const validate = (req, res, next) => {
     if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
     }
-    next();
+    if (typeof next === 'function') {
+        next();
+    } else {
+        console.error('ERROR: next is not a function in validate middleware');
+        res.status(500).json({ message: 'Internal server error in validation' });
+    }
 };
 
 // Login validation

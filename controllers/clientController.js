@@ -11,7 +11,7 @@ exports.createClient = async (req, res, next) => {
         console.log('=== CREATE CLIENT REQUEST ===');
         console.log('Request body:', req.body);
 
-        const { name, email, phone, assignedStaff, loanAmount, loanStartDate, installmentFrequency } = req.body;
+        const { name, email, phone, assignedStaff, loanAmount, loanStartDate, installmentFrequency, interestRate = 0 } = req.body;
 
         console.log('1. Creating client...');
         // Create client
@@ -26,27 +26,68 @@ exports.createClient = async (req, res, next) => {
         await client.save();
         console.log('2. Client created:', client._id);
 
-        console.log('3. Creating loan...');
+        console.log('3. Calculating loan details...');
+        // Calculate Loan Details
+        let installmentsCount;
+        let frequency = installmentFrequency || 'Weekly';
+
+        // Use explicit loanDuration if provided, otherwise fallback to defaults
+        if (req.body.loanDuration) {
+            const weeks = parseInt(req.body.loanDuration);
+            switch (frequency) {
+                case 'Weekly': installmentsCount = weeks; break;
+                case 'Bi-Weekly': installmentsCount = Math.floor(weeks / 2); break;
+                case 'Monthly': installmentsCount = Math.floor(weeks / 4); break;
+                default: installmentsCount = weeks;
+            }
+        } else {
+            switch (frequency) {
+                case 'Weekly': installmentsCount = 16; break;
+                case 'Bi-Weekly': installmentsCount = 8; break;
+                case 'Monthly': default: installmentsCount = 4; break;
+            }
+        }
+
+        const principal = parseFloat(loanAmount);
+        const rate = parseFloat(interestRate);
+
+        // PRD Logic: Weekly Interest
+        // Weekly Interest = Loan Amount * (Interest % / 100)
+        // Total Interest = Weekly Interest * Number of Weeks
+        // Total Payable = Principal + Total Interest
+        // Weekly EMI = Total Payable / Number of Weeks
+
+        const weeklyInterest = principal * (rate / 100);
+        const totalInterest = weeklyInterest * installmentsCount;
+        const totalPayable = principal + totalInterest;
+        const installmentAmount = totalPayable / installmentsCount;
+
+        console.log(`Loan Amount: ${principal}, Rate: ${rate}%, Weeks: ${installmentsCount}`);
+        console.log(`Weekly Int: ${weeklyInterest}, Total Int: ${totalInterest}, Payable: ${totalPayable}, EMI: ${installmentAmount}`);
+
         // Create loan
-        const installmentsCount = installmentFrequency === 'Bi-Weekly' ? 8 : 4;
-        const installmentAmount = loanAmount / installmentsCount;
         const loan = new Loan({
             clientId: client._id,
-            loanAmount,
+            loanAmount: principal,
             loanStartDate,
-            tenure: installmentsCount, // Now using tenure as installments count
-            monthlyInstallment: installmentAmount, // Renamed in local logic but keeping model field
-            remainingAmount: loanAmount,
-            status: 'In Progress'
+            tenure: installmentsCount,
+            interestRate: rate,
+            frequency: frequency,
+            installmentAmount: parseFloat(installmentAmount.toFixed(2)),
+            totalInterest: parseFloat(totalInterest.toFixed(2)),
+            totalPayable: parseFloat(totalPayable.toFixed(2)),
+            totalPaid: 0,
+            remainingAmount: parseFloat(totalPayable.toFixed(2)),
+            status: 'Active'
         });
 
         await loan.save();
         console.log('4. Loan created:', loan._id);
 
         console.log('5. Generating payment schedule...');
-        // Generate payment schedule based on frequency
-        const schedule = generateSchedule(loanAmount, loanStartDate, installmentFrequency);
-        console.log('Schedule generated:', schedule);
+        // Generate payment schedule based on frequency and exact tenure
+        const schedule = generateSchedule(totalPayable, loanStartDate, frequency, installmentsCount);
+        console.log(`Schedule generated: ${schedule.length} installments`);
 
         const payments = schedule.map(payment => ({
             ...payment,
@@ -66,7 +107,10 @@ exports.createClient = async (req, res, next) => {
         });
     } catch (error) {
         console.error('ERROR in createClient:', error);
-        next(error);
+        res.status(500).json({
+            message: error.message || 'Failed to create client',
+            error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
 };
 
@@ -156,10 +200,13 @@ exports.getClientById = async (req, res, next) => {
 // @route   PUT /api/clients/:id
 // @desc    Update client and loan details
 // @access  Private
+// @route   PUT /api/clients/:id
+// @desc    Update client and loan details
+// @access  Private
 exports.updateClient = async (req, res, next) => {
     try {
         const { id } = req.params;
-        const { name, email, phone, status, loanAmount, loanStartDate } = req.body;
+        const { name, email, phone, status, loanAmount, loanStartDate, interestRate, installmentFrequency } = req.body;
 
         const client = await Client.findById(id);
 
@@ -172,7 +219,7 @@ exports.updateClient = async (req, res, next) => {
             return res.status(403).json({ message: 'Access denied' });
         }
 
-        // Update client
+        // Update client details
         if (name) client.name = name;
         if (email) client.email = email;
         if (phone) client.phone = phone;
@@ -180,32 +227,106 @@ exports.updateClient = async (req, res, next) => {
 
         await client.save();
 
-        // Update loan if provided
-        if (loanAmount || loanStartDate) {
+        // Update loan if any financial details provided
+        if (loanAmount || loanStartDate || interestRate !== undefined || installmentFrequency) {
             const loan = await Loan.findOne({ clientId: id });
 
             if (loan) {
-                if (loanAmount) {
-                    loan.loanAmount = loanAmount;
-                    loan.monthlyInstallment = loanAmount / 4;
-                    loan.remainingAmount = loanAmount - loan.totalPaid;
-                }
+                let shouldRecalculate = false;
+
+                // Update basic fields
                 if (loanStartDate) {
                     loan.loanStartDate = loanStartDate;
+                    shouldRecalculate = true; // Date change affects schedule dates
+                }
+
+                // Determine new values or keep existing
+                const newPrincipal = loanAmount ? parseFloat(loanAmount) : loan.loanAmount;
+                const newRate = interestRate !== undefined ? parseFloat(interestRate) : (loan.interestRate || 0);
+                const newFrequency = installmentFrequency || loan.frequency || 'Monthly';
+
+                // Check if recalculation is needed
+                if (loanAmount || interestRate !== undefined || installmentFrequency) {
+                    shouldRecalculate = true;
+
+                    let installmentsCount;
+                    switch (newFrequency) {
+                        case 'Weekly': installmentsCount = 16; break;
+                        case 'Bi-Weekly': installmentsCount = 8; break;
+                        case 'Monthly': default: installmentsCount = 4; break;
+                    }
+
+                    // Calculate new financial details
+                    const totalInterest = newPrincipal * (newRate / 100);
+                    const totalPayable = newPrincipal + totalInterest;
+                    const installmentAmount = totalPayable / installmentsCount;
+
+                    // Update loan model
+                    loan.loanAmount = newPrincipal;
+                    loan.interestRate = newRate;
+                    loan.frequency = newFrequency;
+                    loan.tenure = installmentsCount;
+                    loan.installmentAmount = parseFloat(installmentAmount.toFixed(2));
+                    loan.totalInterest = parseFloat(totalInterest.toFixed(2));
+                    loan.totalPayable = parseFloat(totalPayable.toFixed(2));
+
+                    // Update remaining amount logic (simplified: assume reset or adjust? 
+                    // Re-calculating remaining amount based on totalPayable - totalPaid is safer)
+                    loan.remainingAmount = parseFloat((totalPayable - loan.totalPaid).toFixed(2));
                 }
 
                 await loan.save();
 
-                // Regenerate payment schedule if loan amount changed
-                if (loanAmount) {
+                // Regenerate payment schedule if financial parameters changed
+                if (shouldRecalculate) {
+                    // Delete PENDING payments only. Keep Paid/Overdue? 
+                    // If we change loan structure, existing paid installments might not match.
+                    // For now, let's delete PENDING and regenerate from start date? 
+                    // Or regenerate future payments?
+                    // Implementation Plan says "Regenerate payment schedule". 
+                    // Simplest approach: Delete all pending and non-paid, and recreate sufficient installments to cover remaining?
+                    // Actually, `generateSchedule` generates the whole schedule. 
+                    // If we have paid installments, we should keep them and only generate remaining?
+                    // Use case: User made a mistake in entry. They want to fix it.
+                    // We should probably wipe pending payments and regenerate the schedule.
+                    // But if some are already paid, we can't change history easily.
+                    // Lets stick to the previous logic: Cancel Pending, Generate New from Start Date?
+                    // Or better: Generate full schedule, then mark existing paid ones as paid?
+                    // Previous logic: `await Payment.deleteMany({ loanId: loan._id, status: 'Pending' });`
+
                     await Payment.deleteMany({ loanId: loan._id, status: 'Pending' });
-                    const schedule = generateSchedule(loanAmount, loan.loanStartDate);
-                    const payments = schedule.map(payment => ({
-                        ...payment,
-                        loanId: loan._id,
-                        clientId: client._id
-                    }));
-                    await Payment.insertMany(payments);
+
+                    // We need to know how many installments are left or if we are resetting the whole thing.
+                    // If we assume this is for "fixing data", we can regenerate the whole schedule if nothing is paid yet.
+                    // If something is paid, it's tricky. 
+                    // For this scope ("Editable anytime"), let's assume we regenerate the full schedule and reconcile?
+                    // Or just regenerate pending ones?
+                    // Previous logic: `const schedule = generateSchedule(loanAmount, loan.loanStartDate);` 
+                    // This generates from start date.
+
+                    const schedule = generateSchedule(loan.totalPayable, loan.loanStartDate, loan.frequency);
+
+                    // Filter out installments that match currently paid/overdue ones?
+                    // Or just insert all and let user handle duplicates? No.
+                    // Let's perform a smart update:
+                    // 1. Get existing non-pending payments.
+                    // 2. If any exist, we might have a conflict.
+                    // 3. Simple approach: Delete Pending. Generate all. Filter out those with installmentNo <= max existing installmentNo?
+
+                    const existingPayments = await Payment.find({ loanId: loan._id, status: { $ne: 'Pending' } });
+                    const maxPaidInstallment = existingPayments.reduce((max, p) => Math.max(max, p.installmentNo), 0);
+
+                    const newPayments = schedule
+                        .filter(p => p.installmentNo > maxPaidInstallment) // Only future installments
+                        .map(payment => ({
+                            ...payment,
+                            loanId: loan._id,
+                            clientId: client._id
+                        }));
+
+                    if (newPayments.length > 0) {
+                        await Payment.insertMany(newPayments);
+                    }
                 }
             }
         }

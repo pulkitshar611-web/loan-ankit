@@ -12,6 +12,7 @@ const paymentRoutes = require('./routes/paymentRoutes');
 const reminderRoutes = require('./routes/reminderRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const importRoutes = require('./routes/importRoutes');
+const bookingRoutes = require('./routes/bookingRoutes');
 const { initCron } = require('./controllers/reminderController');
 
 // Initialize Cron Job
@@ -44,6 +45,7 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/reminders', reminderRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/import', importRoutes);
+app.use('/api/bookings', bookingRoutes); // Use Booking Routes
 
 // Error handling middleware (must be last)
 app.use(errorHandler);
