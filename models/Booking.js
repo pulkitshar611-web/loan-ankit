@@ -23,8 +23,12 @@ const bookingSchema = new mongoose.Schema({
     },
     interest: {
         type: String,
-        enum: ['Student Visa', 'PR Application', 'Work Permit', 'Family Sponsorship', 'Visitor Visa', 'Citizenship', 'General Inquiry'],
+        required: true,
         default: 'General Inquiry'
+    },
+    timeSlot: {
+        type: String,
+        required: true
     },
     status: {
         type: String,
