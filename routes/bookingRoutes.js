@@ -13,5 +13,6 @@ router.get('/available-slots', bookingController.getAvailableSlots);
 // Protected routes (Admin only)
 router.get('/', auth, roleCheck('admin'), bookingController.getBookings);
 router.patch('/:id/status', auth, roleCheck('admin'), bookingController.updateBookingStatus);
+router.delete('/:id', auth, roleCheck('admin'), bookingController.deleteBooking);
 
 module.exports = router;

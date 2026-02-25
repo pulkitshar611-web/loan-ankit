@@ -5,7 +5,7 @@ const Booking = require('../models/Booking');
 // @access  Public
 exports.createBooking = async (req, res, next) => {
     try {
-        const { name, email, phone, date, interest, timeSlot } = req.body;
+        const { name, email, phone, address, date, interest, timeSlot } = req.body;
 
         // Check if slot is already booked for the given date
         const existingBooking = await Booking.findOne({ date, timeSlot });
@@ -17,6 +17,7 @@ exports.createBooking = async (req, res, next) => {
             name,
             email,
             phone,
+            address,
             date,
             interest,
             timeSlot
@@ -101,6 +102,21 @@ exports.getAvailableSlots = async (req, res, next) => {
         const availableSlots = allSlots.filter(slot => !bookedSlots.includes(slot));
 
         res.json(availableSlots);
+    } catch (error) {
+        next(error);
+    }
+};
+
+// @route   DELETE /api/bookings/:id
+// @desc    Delete a booking
+// @access  Private (Admin)
+exports.deleteBooking = async (req, res, next) => {
+    try {
+        const booking = await Booking.findByIdAndDelete(req.params.id);
+        if (!booking) {
+            return res.status(404).json({ message: 'Booking not found' });
+        }
+        res.json({ message: 'Booking deleted successfully' });
     } catch (error) {
         next(error);
     }
