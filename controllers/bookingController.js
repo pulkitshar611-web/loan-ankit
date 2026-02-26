@@ -1,4 +1,5 @@
 const Booking = require('../models/Booking');
+const Availability = require('../models/Availability');
 
 // @route   POST /api/bookings
 // @desc    Create a new booking
@@ -6,6 +7,14 @@ const Booking = require('../models/Booking');
 exports.createBooking = async (req, res, next) => {
     try {
         const { name, email, phone, address, date, interest, timeSlot } = req.body;
+
+        // Check if date is blocked by admin
+        const targetDate = new Date(date);
+        targetDate.setUTCHours(0, 0, 0, 0);
+        const availability = await Availability.findOne({ date: targetDate });
+        if (availability && availability.isBlocked) {
+            return res.status(400).json({ message: 'This date is not available for booking.' });
+        }
 
         // Check if slot is already booked for the given date
         const existingBooking = await Booking.findOne({ date, timeSlot });
@@ -75,6 +84,14 @@ exports.getAvailableSlots = async (req, res, next) => {
         const { date } = req.query;
         if (!date) {
             return res.status(400).json({ message: 'Date is required' });
+        }
+
+        // Check if date is blocked by admin
+        const targetDate = new Date(date);
+        targetDate.setUTCHours(0, 0, 0, 0);
+        const availability = await Availability.findOne({ date: targetDate });
+        if (availability && availability.isBlocked) {
+            return res.json([]); // Return no slots if date is blocked
         }
 
         // Define all possible slots
