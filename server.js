@@ -16,6 +16,8 @@ const bookingRoutes = require('./routes/bookingRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
 const contactRoutes = require('./routes/contactRoutes');
 const availabilityRoutes = require('./routes/availabilityRoutes');
+const settingsRoutes = require('./routes/settingsRoutes');
+const path = require('path');
 
 const { initCron } = require('./controllers/reminderController');
 
@@ -31,6 +33,7 @@ connectDB();
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Health check route
 app.get('/', (req, res) => {
@@ -53,6 +56,7 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/contacts', contactRoutes);
 app.use('/api/availability', availabilityRoutes);
+app.use('/api/settings', settingsRoutes);
 
 
 // Error handling middleware (must be last)

@@ -28,6 +28,11 @@ const loanSchema = new mongoose.Schema({
         enum: ['Weekly', 'Bi-Weekly', 'Monthly'],
         default: 'Monthly'
     },
+    interestType: {
+        type: String,
+        enum: ['Installment', 'Flat'],
+        default: 'Installment'
+    },
     installmentAmount: {
         type: Number,
         required: true

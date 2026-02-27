@@ -50,20 +50,21 @@ exports.createClient = async (req, res, next) => {
 
         const principal = parseFloat(loanAmount);
         const rate = parseFloat(interestRate);
+        const interestType = req.body.interestType || 'Installment';
 
-        // PRD Logic: Weekly Interest
-        // Weekly Interest = Loan Amount * (Interest % / 100)
-        // Total Interest = Weekly Interest * Number of Weeks
-        // Total Payable = Principal + Total Interest
-        // Weekly EMI = Total Payable / Number of Weeks
+        let totalInterest = 0;
+        if (interestType === 'Flat') {
+            totalInterest = principal * (rate / 100);
+        } else {
+            // Interest rate applies per installment period
+            totalInterest = principal * (rate / 100) * installmentsCount;
+        }
 
-        const weeklyInterest = principal * (rate / 100);
-        const totalInterest = weeklyInterest * installmentsCount;
         const totalPayable = principal + totalInterest;
         const installmentAmount = totalPayable / installmentsCount;
 
-        console.log(`Loan Amount: ${principal}, Rate: ${rate}%, Weeks: ${installmentsCount}`);
-        console.log(`Weekly Int: ${weeklyInterest}, Total Int: ${totalInterest}, Payable: ${totalPayable}, EMI: ${installmentAmount}`);
+        console.log(`Loan Amount: ${principal}, Rate: ${rate}%, Type: ${interestType}, Installments: ${installmentsCount}`);
+        console.log(`Total Int: ${totalInterest}, Payable: ${totalPayable}, EMI: ${installmentAmount}`);
 
         // Create loan
         const loan = new Loan({
@@ -73,6 +74,7 @@ exports.createClient = async (req, res, next) => {
             tenure: installmentsCount,
             interestRate: rate,
             frequency: frequency,
+            interestType: interestType,
             installmentAmount: parseFloat(installmentAmount.toFixed(2)),
             totalInterest: parseFloat(totalInterest.toFixed(2)),
             totalPayable: parseFloat(totalPayable.toFixed(2)),
@@ -246,7 +248,7 @@ exports.updateClient = async (req, res, next) => {
                 const newFrequency = installmentFrequency || loan.frequency || 'Monthly';
 
                 // Check if recalculation is needed
-                if (loanAmount || interestRate !== undefined || installmentFrequency) {
+                if (loanAmount || interestRate !== undefined || installmentFrequency || req.body.interestType) {
                     shouldRecalculate = true;
 
                     let installmentsCount;
@@ -256,8 +258,17 @@ exports.updateClient = async (req, res, next) => {
                         case 'Monthly': default: installmentsCount = 4; break;
                     }
 
+                    const newInterestType = req.body.interestType || loan.interestType || 'Installment';
+
                     // Calculate new financial details
-                    const totalInterest = newPrincipal * (newRate / 100);
+                    let totalInterest = 0;
+                    if (newInterestType === 'Flat') {
+                        totalInterest = newPrincipal * (newRate / 100);
+                    } else {
+                        // Interest rate applies per installment period
+                        totalInterest = newPrincipal * (newRate / 100) * installmentsCount;
+                    }
+
                     const totalPayable = newPrincipal + totalInterest;
                     const installmentAmount = totalPayable / installmentsCount;
 
@@ -265,13 +276,13 @@ exports.updateClient = async (req, res, next) => {
                     loan.loanAmount = newPrincipal;
                     loan.interestRate = newRate;
                     loan.frequency = newFrequency;
+                    loan.interestType = newInterestType;
                     loan.tenure = installmentsCount;
                     loan.installmentAmount = parseFloat(installmentAmount.toFixed(2));
                     loan.totalInterest = parseFloat(totalInterest.toFixed(2));
                     loan.totalPayable = parseFloat(totalPayable.toFixed(2));
 
-                    // Update remaining amount logic (simplified: assume reset or adjust? 
-                    // Re-calculating remaining amount based on totalPayable - totalPaid is safer)
+                    // Update remaining amount logic
                     loan.remainingAmount = parseFloat((totalPayable - loan.totalPaid).toFixed(2));
                 }
 
